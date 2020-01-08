@@ -97,12 +97,12 @@ export abstract class AbstractViewContribution<T extends Widget> implements Comm
             await shell.addWidget(widget, widgetArgs);
         } else if (args.toggle && area && shell.isExpanded(area) && tabBar.currentTitle === widget.title) {
             // The widget is attached and visible, so close it (toggle)
-            widget.close();
+            await this.closeView();
         }
         if (widget.isAttached && args.activate) {
-            shell.activateWidget(this.options.widgetId);
+            await shell.activateWidget(this.options.widgetId);
         } else if (widget.isAttached && args.reveal) {
-            shell.revealWidget(this.options.widgetId);
+            await shell.revealWidget(this.options.widgetId);
         }
         return this.widget;
     }
@@ -110,15 +110,24 @@ export abstract class AbstractViewContribution<T extends Widget> implements Comm
     registerCommands(commands: CommandRegistry): void {
         if (this.toggleCommand) {
             commands.registerCommand(this.toggleCommand, {
-                execute: () => this.openView({
-                    toggle: true,
-                    activate: true
-                })
+                execute: () => this.toggleView()
             });
         }
         this.quickView.registerItem({
             label: this.options.widgetName,
             open: () => this.openView({ activate: true })
+        });
+    }
+
+    async closeView(): Promise<T | undefined> {
+        const widget = await this.shell.closeWidget(this.options.widgetId);
+        return widget as T | undefined;
+    }
+
+    toggleView(): Promise<T> {
+        return this.openView({
+            toggle: true,
+            activate: true
         });
     }
 

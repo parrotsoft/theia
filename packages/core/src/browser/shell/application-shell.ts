@@ -942,7 +942,7 @@ export class ApplicationShell extends Widget {
      *
      * @returns the activated widget if it was found
      */
-    activateWidget(id: string): Widget | undefined {
+    async activateWidget(id: string): Promise<Widget | undefined> {
         const stack = this.toTrackedStack(id);
         let current = stack.pop();
         if (current && !this.doActivateWidget(current.id)) {
@@ -957,7 +957,29 @@ export class ApplicationShell extends Widget {
                 current = child;
             }
         }
+        if (!current) {
+            return undefined;
+        }
+        await Promise.all([
+            this.onActive(current),
+            this.waitForVisibility(current, true),
+            this.pendingUpdates
+        ]);
         return current;
+    }
+
+    protected onActive(widget: Widget): Promise<void> {
+        if (this.activeWidget === widget) {
+            return Promise.resolve();
+        }
+        return new Promise(resolve => {
+            const toDispose = this.onDidChangeActiveWidget(() => {
+                if (this.activeWidget === widget) {
+                    toDispose.dispose();
+                    resolve();
+                }
+            });
+        });
     }
 
     /**
@@ -1035,7 +1057,7 @@ export class ApplicationShell extends Widget {
      *
      * @returns the revealed widget if it was found
      */
-    revealWidget(id: string): Widget | undefined {
+    async revealWidget(id: string): Promise<Widget | undefined> {
         const stack = this.toTrackedStack(id);
         let current = stack.pop();
         if (current && !this.doRevealWidget(current.id)) {
@@ -1049,7 +1071,30 @@ export class ApplicationShell extends Widget {
                 current = child;
             }
         }
+        if (!current) {
+            return undefined;
+        }
+        await Promise.all([
+            this.waitForVisibility(current, true),
+            this.pendingUpdates
+        ]);
         return current;
+    }
+
+    protected waitForVisibility(widget: Widget, visibility: boolean): Promise<void> {
+        if (widget.isVisible === visibility) {
+            return new Promise(resolve => window.requestAnimationFrame(() => resolve()));
+        }
+        return new Promise(resolve => {
+            const waitForVisible = () => window.requestAnimationFrame(() => {
+                if (widget.isVisible === visibility) {
+                    window.requestAnimationFrame(() => resolve());
+                } else {
+                    waitForVisible();
+                }
+            });
+            waitForVisible();
+        });
     }
 
     /**
@@ -1266,6 +1311,20 @@ export class ApplicationShell extends Widget {
         }
     }
 
+    async closeWidget(id: string): Promise<Widget | undefined> {
+        const stack = this.toTrackedStack(id);
+        const widget = this.toTrackedStack(id).pop();
+        if (!widget) {
+            return undefined;
+        }
+        widget.close();
+        await Promise.all([
+            this.waitForVisibility(widget, false),
+            this.pendingUpdates
+        ]);
+        return stack[0] || widget;
+    }
+
     /**
      * The shell area name of the currently active tab, or undefined.
      */
@@ -1280,7 +1339,11 @@ export class ApplicationShell extends Widget {
      * Determine the name of the shell area where the given widget resides. The result is
      * undefined if the widget does not reside directly in the shell.
      */
-    getAreaFor(widget: Widget): ApplicationShell.Area | undefined {
+    getAreaFor(input: Widget): ApplicationShell.Area | undefined {
+        const widget = this.toTrackedStack(input.id).pop();
+        if (!widget) {
+            return undefined;
+        }
         if (widget instanceof TabBar) {
             if (find(this.mainPanel.tabBars(), tb => tb === widget)) {
                 return 'main';
@@ -1314,7 +1377,11 @@ export class ApplicationShell extends Widget {
         return undefined;
     }
 
-    protected getAreaPanelFor(widget: Widget): DockPanel | undefined {
+    protected getAreaPanelFor(input: Widget): DockPanel | undefined {
+        const widget = this.toTrackedStack(input.id).pop();
+        if (!widget) {
+            return undefined;
+        }
         const title = widget.title;
         const mainPanelTabBar = this.mainPanel.findTabBar(title);
         if (mainPanelTabBar) {
@@ -1360,25 +1427,29 @@ export class ApplicationShell extends Widget {
                 default:
                     throw new Error('Illegal argument: ' + widgetOrArea);
             }
-        } else if (widgetOrArea && widgetOrArea.isAttached) {
-            const widgetTitle = widgetOrArea.title;
-            const mainPanelTabBar = this.mainPanel.findTabBar(widgetTitle);
-            if (mainPanelTabBar) {
-                return mainPanelTabBar;
-            }
-            const bottomPanelTabBar = this.bottomPanel.findTabBar(widgetTitle);
-            if (bottomPanelTabBar) {
-                return bottomPanelTabBar;
-            }
-            const leftPanelTabBar = this.leftPanelHandler.tabBar;
-            if (ArrayExt.firstIndexOf(leftPanelTabBar.titles, widgetTitle) > -1) {
-                return leftPanelTabBar;
-            }
-            const rightPanelTabBar = this.rightPanelHandler.tabBar;
-            if (ArrayExt.firstIndexOf(rightPanelTabBar.titles, widgetTitle) > -1) {
-                return rightPanelTabBar;
-            }
         }
+        const widget = this.toTrackedStack(widgetOrArea.id).pop();
+        if (!widget) {
+            return undefined;
+        }
+        const widgetTitle = widget.title;
+        const mainPanelTabBar = this.mainPanel.findTabBar(widgetTitle);
+        if (mainPanelTabBar) {
+            return mainPanelTabBar;
+        }
+        const bottomPanelTabBar = this.bottomPanel.findTabBar(widgetTitle);
+        if (bottomPanelTabBar) {
+            return bottomPanelTabBar;
+        }
+        const leftPanelTabBar = this.leftPanelHandler.tabBar;
+        if (ArrayExt.firstIndexOf(leftPanelTabBar.titles, widgetTitle) > -1) {
+            return leftPanelTabBar;
+        }
+        const rightPanelTabBar = this.rightPanelHandler.tabBar;
+        if (ArrayExt.firstIndexOf(rightPanelTabBar.titles, widgetTitle) > -1) {
+            return rightPanelTabBar;
+        }
+        return undefined;
     }
 
     /**
